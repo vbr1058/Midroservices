@@ -1,0 +1,4 @@
+spring:
+  kafka:
+    bootstrapServers: kafka:9092  # Kafka broker address
+#    bootstrapServers: localhost:9092  # Kafka broker address

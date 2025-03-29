@@ -1,0 +1,150 @@
+services:
+  mysql-db:
+    image: mysql:latest
+    container_name: mysql-db
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: postsDB
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql  # Named volume
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linkedIn-network
+
+  connection-db:
+    image: neo4j
+    container_name: connection-db
+    environment:
+      - NEO4J_AUTH=neo4j/password  # Username and password for Neo4j
+    networks:
+      - linkedIn-network
+    ports:
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data  # Path for Neo4j data storage
+      - neo4j-logs:/logs  # Path for Neo4j logs
+      - neo4j-import:/var/lib/neo4j/import  # For data import
+      - neo4j-plugins:/var/lib/neo4j/plugins  # For plugins
+
+  discovery-service:
+    image: vbr1058/discovery-service
+    container_name: discovery-service
+    networks:
+      - linkedIn-network
+    ports:
+      - "8761:8761"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  post-service:
+    image: vbr1058/post-service
+    container_name: post-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-db:3306/postsDB
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+    networks:
+      - linkedIn-network
+    depends_on:
+      - mysql-db
+      - discovery-service
+
+  user-service:
+    image: vbr1058/user-service
+    container_name: user-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-db:3306/postsDB
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092 # Use the internal Kafka address
+    networks:
+      - linkedIn-network
+    ports:
+      - "9020:9020"
+    depends_on:
+      - mysql-db
+      - discovery-service
+      - kafka
+
+  connections-service:
+    image: vbr1058/connections-service
+    container_name: connections-service
+    networks:
+      - linkedIn-network
+    depends_on:
+      - discovery-service
+
+  api-gatway:
+    image: vbr1058/api-gatway
+    container_name: api-gateway
+    networks:
+      - linkedIn-network
+    depends_on:
+      - post-service
+      - user-service
+    ports:
+      - "8080:8080"
+
+  zookeeper:
+    image: wurstmeister/zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    networks:
+      - linkedIn-network
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+      image: wurstmeister/kafka
+      container_name: kafka-broker
+      ports:
+        - "9092:9092"
+        - "9093:9093"
+      networks:
+        - linkedIn-network
+      environment:
+        KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+        KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092,OUTSIDE://localhost:9092
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+        KAFKA_LISTENERS: INSIDE://0.0.0.0:9092,OUTSIDE://0.0.0.0:9093
+        KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE  # Add this line
+        KAFKA_LOG_DIRS: /var/lib/kafka/data
+        KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      depends_on:
+        - zookeeper
+
+  notification-service:
+    image: vbr1058/notification-service
+    container_name: notification-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-db:3306/postsDB
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: root
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092 # Use the internal Kafka address
+    networks:
+      - linkedIn-network
+    depends_on:
+      - mysql-db
+      - discovery-service
+      - kafka
+
+volumes:
+  mysql-data:  # Single volume for MySQL
+  neo4j-data:
+  neo4j-logs:
+  neo4j-import:
+  neo4j-plugins:
+
+networks:
+  linkedIn-network:
